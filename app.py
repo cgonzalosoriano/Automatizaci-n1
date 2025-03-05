@@ -6,7 +6,7 @@ import os
 app = Flask(__name__)
 
 # Configura tu API Key de OpenAI (reemplaza "TU_API_KEY" con tu clave real)
-openai.api_key = "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"
+openai.api_key = ""
 
 def obtener_respuesta_chatgpt(prompt):
     try:
