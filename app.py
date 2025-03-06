@@ -37,7 +37,7 @@ def get_calendar_service():
 def listar_eventos():
     try:
         service = get_calendar_service()
-        calendar_id = 'primary'  # O especifica otro calendario si lo prefieres
+        calendar_id = '4b3b738826123b6b5715b6a4348f46bc395aa7efcfb72182c9f3baeee992105f@group.calendar.google.com'  # O especifica otro calendario si lo prefieres
         events_result = service.events().list(
             calendarId=calendar_id, 
             maxResults=10, 
