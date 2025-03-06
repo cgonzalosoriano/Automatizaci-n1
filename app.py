@@ -71,11 +71,21 @@ def crear_evento(summary, start_datetime, end_datetime):
                 'timeZone': 'America/Argentina/Buenos_Aires'
             },
         }
-        created_event = service.events().insert(calendarId='primary', body=event).execute()
+
+        # Reemplaza esto con la ID real de tu calendario
+        calendar_id = "4b3b738826123b6b5715b3a4ab6f46bc395a7efcfb72182c9f3baeee99210f5f@group.calendar.google.com"
+
+        created_event = service.events().insert(
+            calendarId=calendar_id,
+            body=event
+        ).execute()
+
         return f"Evento creado con éxito: {created_event.get('htmlLink')}"
+
     except Exception as e:
         print("Error al crear evento:", e)
         return "Hubo un error al crear el evento."
+
 
 @app.route("/", methods=["GET"])
 def home():
