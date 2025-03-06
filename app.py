@@ -3,6 +3,7 @@ from twilio.twiml.messaging_response import MessagingResponse
 import openai
 import os
 import json
+import re
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from datetime import date
@@ -38,7 +39,8 @@ def obtener_rango_fechas_con_chatgpt(user_message):
             "Eres un asistente para interpretar rangos de fechas. "
             "El usuario te dará una frase relacionada con fechas (por ejemplo, 'eventos de mañana' o 'eventos de la próxima semana'). "
             "Responde únicamente con un objeto JSON que contenga las claves 'start_date' y 'end_date' en formato YYYY-MM-DD. "
-            "Si no puedes determinar un rango, usa la fecha de hoy para ambas claves. No agregues ningún texto adicional."
+            "No incluyas texto adicional ni explicaciones, solo el objeto JSON. "
+            "Ejemplo: {\"start_date\": \"2025-03-10\", \"end_date\": \"2025-03-12\"}."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -47,14 +49,27 @@ def obtener_rango_fechas_con_chatgpt(user_message):
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=messages,
-            temperature=0.0,
+            temperature=0.0,  # Más determinista
             max_tokens=100
         )
         raw_content = response.choices[0].message.content.strip()
+
+        # Intenta aislar un bloque JSON con una expresión regular
+        match = re.search(r'\{.*\}', raw_content)
+        if match:
+            raw_content = match.group(0)
+
         fecha_info = json.loads(raw_content)
+
+        # Validamos que contenga 'start_date' y 'end_date'
+        if "start_date" not in fecha_info or "end_date" not in fecha_info:
+            raise ValueError("No se encontró 'start_date' o 'end_date' en el JSON.")
+
         return fecha_info
+
     except Exception as e:
         print("Error al obtener rango de fechas con ChatGPT:", e)
+        # Si falla, devolvemos un rango por defecto (hoy).
         hoy_str = str(date.today())
         return {"start_date": hoy_str, "end_date": hoy_str}
 
