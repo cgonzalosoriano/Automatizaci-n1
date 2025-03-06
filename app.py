@@ -6,7 +6,7 @@ import json
 import re
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from datetime import date
+from datetime import date, datetime
 
 app = Flask(__name__)
 
@@ -17,14 +17,36 @@ openai.api_key = os.environ.get("OPENAI_API_KEY")
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 def obtener_respuesta_chatgpt(prompt):
+    """
+    Responde con ChatGPT en modo genérico, pero incluyendo la fecha y hora actuales
+    en el system prompt para que ChatGPT pueda usarlas si el usuario pregunta.
+    """
     try:
+        # Obtén la fecha y hora actual
+        now = datetime.now()
+        fecha_str = now.strftime("%d de %B de %Y")
+        hora_str = now.strftime("%H:%M")
+
+        # Mensaje de sistema que informa a ChatGPT la fecha y hora actuales
+        system_prompt = (
+            f"Eres un asistente que conoce la fecha y hora actuales. "
+            f"Hoy es {fecha_str} y son las {hora_str}. "
+            "Responde en español. Si el usuario pregunta '¿Qué fecha es hoy?' o '¿Qué hora es?', usa estos datos."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=0.7,
             max_tokens=150
         )
         return response.choices[0].message.content.strip()
+
     except Exception as e:
         print("Error al obtener respuesta de ChatGPT:", e)
         return "Lo siento, hubo un error procesando tu solicitud."
@@ -199,7 +221,7 @@ def whatsapp_reply():
         end_date = fecha_info["end_date"]
         respuesta = listar_eventos_por_rango(start_date, end_date)
     else:
-        # Cualquier otra cosa, ChatGPT genérico
+        # Cualquier otra cosa, ChatGPT genérico (incluye fecha/hora actual en el prompt)
         respuesta = obtener_respuesta_chatgpt(incoming_msg)
 
     resp = MessagingResponse()
