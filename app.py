@@ -10,6 +10,9 @@ from datetime import datetime, date, timedelta
 
 app = Flask(__name__)
 
+# Diccionario global para almacenar el historial de conversación por número de teléfono
+conversaciones = {}
+
 # Configura tu API Key de OpenAI desde una variable de entorno
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
@@ -20,11 +23,47 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 CALENDAR_ID = "4b3b738826123b6b5715b6a4348f46bc395aa7efcfb72182c9f3baeee992105f@group.calendar.google.com"
 TIMEZONE = "America/Argentina/Buenos_Aires"
 
+def obtener_respuesta_chatgpt_con_historial(historial):
+    """
+    Llama a ChatGPT con el historial completo (usuario y asistente) para mantener el contexto.
+    El historial es una lista de diccionarios con "role" en ["user", "assistant"] y "content".
+    Agregamos un system prompt al inicio para que ChatGPT sepa la fecha/hora actual.
+    """
+    now = datetime.now()
+    fecha_str = now.strftime("%d de %B de %Y")
+    hora_str = now.strftime("%H:%M")
+
+    system_prompt = {
+        "role": "system",
+        "content": (
+            f"Eres un asistente que conoce la fecha y hora actuales. "
+            f"Hoy es {fecha_str} y son las {hora_str} (zona horaria: {TIMEZONE}). "
+            "Responde siempre en español y mantén el contexto de la conversación."
+        )
+    }
+
+    # Construimos la lista final de mensajes: system_prompt + historial completo
+    mensajes = [system_prompt] + historial
+
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=mensajes,
+            temperature=0.7,
+            max_tokens=200
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        print("Error al obtener respuesta con historial:", e)
+        return "Lo siento, hubo un error procesando tu solicitud."
+
 
 def obtener_respuesta_generica(prompt):
     """
-    Respuesta genérica de ChatGPT, incluyendo la fecha y hora actuales
-    para que ChatGPT pueda responder preguntas tipo "¿Qué día es hoy?".
+    Respuesta genérica de ChatGPT SIN usar historial, 
+    pero incluyendo fecha/hora actual en el system prompt.
+    (Este se usaba antes; ahora lo usaremos solo si deseas 
+     una respuesta sin memoria de la conversación).
     """
     try:
         now = datetime.now()
@@ -66,14 +105,6 @@ def interpretar_instruccion_evento(user_message):
         "time_range_start": "YYYY-MM-DD",
         "time_range_end": "YYYY-MM-DD"
       }
-
-    - "action": qué quiere hacer el usuario.
-    - "summary": título del evento.
-    - "start_datetime", "end_datetime": para crear/actualizar el evento.
-    - "event_id": para ubicar un evento específico (si ChatGPT lo deduce).
-    - "time_range_start", "time_range_end": para listar eventos en un rango.
-
-    Ajusta según necesites. 
     """
     try:
         system_prompt = (
@@ -131,9 +162,6 @@ def get_calendar_service():
 
 
 def crear_evento(summary, start_datetime, end_datetime):
-    """
-    Crea un evento con los datos dados. start/end en ISO 8601 (YYYY-MM-DDTHH:MM:SS).
-    """
     try:
         service = get_calendar_service()
         event = {
@@ -158,9 +186,6 @@ def crear_evento(summary, start_datetime, end_datetime):
 
 
 def listar_eventos_por_rango(start_date, end_date):
-    """
-    Lista eventos en el rango dado [start_date, end_date]. Formato YYYY-MM-DD.
-    """
     try:
         service = get_calendar_service()
         time_min = f"{start_date}T00:00:00"
@@ -191,10 +216,6 @@ def listar_eventos_por_rango(start_date, end_date):
 
 
 def actualizar_evento(event_id, summary=None, start_datetime=None, end_datetime=None):
-    """
-    Actualiza un evento existente. Se necesita event_id.
-    Si summary, start_datetime o end_datetime vienen en None, no se modifican.
-    """
     try:
         service = get_calendar_service()
         event = service.events().get(calendarId=CALENDAR_ID, eventId=event_id).execute()
@@ -224,9 +245,6 @@ def actualizar_evento(event_id, summary=None, start_datetime=None, end_datetime=
 
 
 def borrar_evento(event_id):
-    """
-    Borra un evento existente, dado su event_id.
-    """
     try:
         service = get_calendar_service()
         service.events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
@@ -242,10 +260,18 @@ def home():
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_reply():
+    from_number = request.form.get("From")  # número del usuario
     incoming_msg = request.form.get("Body", "").strip()
     print(">>> Mensaje entrante:", incoming_msg)
 
-    # 1. Pedimos a ChatGPT que interprete la instrucción de calendario
+    # 1. Inicializar historial para este usuario si no existe
+    if from_number not in conversaciones:
+        conversaciones[from_number] = []
+
+    # 2. Agregar el mensaje del usuario al historial
+    conversaciones[from_number].append({"role": "user", "content": incoming_msg})
+
+    # 3. Interpretar si es una instrucción de evento
     instruccion = interpretar_instruccion_evento(incoming_msg)
     action = instruccion.get("action", "other")
 
@@ -278,14 +304,18 @@ def whatsapp_reply():
             respuesta = borrar_evento(event_id)
 
     else:
-        # Cualquier otra cosa, respuesta genérica con ChatGPT (fecha/hora actual)
-        respuesta = obtener_respuesta_generica(incoming_msg)
+        # 4. Si no es una instrucción de evento, llamamos a ChatGPT con TODO el historial
+        respuesta = obtener_respuesta_chatgpt_con_historial(conversaciones[from_number])
 
+    # 5. Agregar la respuesta de ChatGPT (o la acción) al historial
+    conversaciones[from_number].append({"role": "assistant", "content": respuesta})
+
+    # 6. Devolver la respuesta a WhatsApp
     resp = MessagingResponse()
     resp.message(respuesta)
     return Response(str(resp), mimetype="application/xml")
 
-
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
