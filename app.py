@@ -57,32 +57,55 @@ def listar_eventos():
         print("Error al listar eventos:", e)
         return "Hubo un error al obtener los eventos del calendario."
 
+def crear_evento(summary, start_datetime, end_datetime):
+    try:
+        service = get_calendar_service()
+        event = {
+            'summary': summary,
+            'start': {
+                'dateTime': start_datetime,  # Ejemplo: "2025-03-10T11:00:00"
+                'timeZone': 'America/Argentina/Buenos_Aires'
+            },
+            'end': {
+                'dateTime': end_datetime,    # Ejemplo: "2025-03-10T12:00:00"
+                'timeZone': 'America/Argentina/Buenos_Aires'
+            },
+        }
+        created_event = service.events().insert(calendarId='primary', body=event).execute()
+        return f"Evento creado con éxito: {created_event.get('htmlLink')}"
+    except Exception as e:
+        print("Error al crear evento:", e)
+        return "Hubo un error al crear el evento."
+
 @app.route("/", methods=["GET"])
 def home():
     return "¡Bienvenido! La aplicación está funcionando."
 
 @app.route("/whatsapp", methods=["POST"])
 def whatsapp_reply():
-    # Log para confirmar la entrada al endpoint
     print(">>> Llegó una petición a /whatsapp")
-    
-    # Obtiene el mensaje entrante desde WhatsApp
     incoming_msg = request.form.get("Body", "").strip()
     print(f">>> Mensaje entrante: {incoming_msg}")
 
-    # Si el mensaje contiene términos relacionados con calendario o eventos, se llama a listar_eventos()
-    if "evento" in incoming_msg.lower() or "calendario" in incoming_msg.lower():
+    incoming_lower = incoming_msg.lower()
+    
+    if "crear evento" in incoming_lower or "agregar evento" in incoming_lower:
+        # Llama a crear_evento con datos fijos de prueba
+        respuesta = crear_evento(
+            summary="Evento de prueba",
+            start_datetime="2025-03-10T11:00:00",
+            end_datetime="2025-03-10T12:00:00"
+        )
+    elif "evento" in incoming_lower or "calendario" in incoming_lower:
         respuesta = listar_eventos()
     else:
         respuesta = obtener_respuesta_chatgpt(incoming_msg)
 
-    # Se crea la respuesta para enviar a través de Twilio
     resp = MessagingResponse()
-    msg = resp.message()
-    msg.body(respuesta)
-
+    resp.message(respuesta)
     return Response(str(resp), mimetype="application/xml")
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
+
