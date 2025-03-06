@@ -72,7 +72,7 @@ def listar_eventos_por_rango(start_date, end_date):
     try:
         service = get_calendar_service()
         # Reemplaza con la ID real de tu calendario (la que obtuviste en la integración)
-        calendar_id = "4b3b738826123b6b5715b3a4ab6f46bc395a7efcfb72182c9f3baeee99210f5f@group.calendar.google.com"
+        calendar_id = "4b3b738826123b6b5715b6a4348f46bc395aa7efcfb72182c9f3baeee992105f@group.calendar.google.com"
         time_min = f"{start_date}T00:00:00Z"
         time_max = f"{end_date}T23:59:59Z"
         events_result = service.events().list(
@@ -110,7 +110,7 @@ def crear_evento(summary, start_datetime, end_datetime):
             },
         }
         # Reemplaza con la ID real de tu calendario
-        calendar_id = "4b3b738826123b6b5715b3a4ab6f46bc395a7efcfb72182c9f3baeee99210f5f@group.calendar.google.com"
+        calendar_id = "4b3b738826123b6b5715b6a4348f46bc395aa7efcfb72182c9f3baeee992105f@group.calendar.google.com"
         created_event = service.events().insert(
             calendarId=calendar_id,
             body=event
