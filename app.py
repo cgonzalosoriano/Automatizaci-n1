@@ -29,6 +29,42 @@ def obtener_respuesta_chatgpt(prompt):
         print("Error al obtener respuesta de ChatGPT:", e)
         return "Lo siento, hubo un error procesando tu solicitud."
 
+def obtener_intencion(user_message):
+    """
+    Usa ChatGPT para decidir la intención del usuario: create, list o other.
+    Responde con un JSON { "intention": "create" } o { "intention": "list" } o { "intention": "other" }.
+    """
+    try:
+        system_prompt = (
+            "Eres un asistente que clasifica la intención del usuario con respecto a eventos. "
+            "Si el usuario quiere crear un evento, responde con un JSON: {\"intention\": \"create\"}. "
+            "Si el usuario quiere ver o listar eventos, responde con un JSON: {\"intention\": \"list\"}. "
+            "Si no está claro, responde {\"intention\": \"other\"}. "
+            "No añadas texto extra."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.0,  # determinista
+            max_tokens=50
+        )
+        raw_content = response.choices[0].message.content.strip()
+
+        # Aislar un bloque JSON con regex en caso de que ChatGPT añada texto extra
+        match = re.search(r'\{.*\}', raw_content)
+        if match:
+            raw_content = match.group(0)
+
+        data = json.loads(raw_content)
+        return data.get("intention", "other")
+    except Exception as e:
+        print("Error al obtener intención:", e)
+        return "other"
+
 def obtener_rango_fechas_con_chatgpt(user_message):
     """
     Usa ChatGPT para extraer un rango de fechas en formato YYYY-MM-DD.
@@ -86,7 +122,7 @@ def listar_eventos_por_rango(start_date, end_date):
     """
     try:
         service = get_calendar_service()
-        # Reemplaza con la ID real de tu calendario (la que obtuviste en la integración)
+        # Reemplaza con la ID real de tu calendario
         calendar_id = "4b3b738826123b6b5715b6a4348f46bc395aa7efcfb72182c9f3baeee992105f@group.calendar.google.com"
         time_min = f"{start_date}T00:00:00Z"
         time_max = f"{end_date}T23:59:59Z"
@@ -145,23 +181,25 @@ def whatsapp_reply():
     incoming_msg = request.form.get("Body", "").strip()
     print(f">>> Mensaje entrante: {incoming_msg}")
 
-    incoming_lower = incoming_msg.lower()
+    # 1. Determinar intención con ChatGPT
+    intention = obtener_intencion(incoming_msg)
+    print(f">>> Intención detectada: {intention}")
 
-    # Detectar intención para crear evento
-    if "crear evento" in incoming_lower or "agregar evento" in incoming_lower:
-        # Aquí se podría utilizar ChatGPT para extraer datos del evento; por ahora usamos datos fijos
+    if intention == "create":
+        # Crear evento (por ahora, datos fijos)
         respuesta = crear_evento(
             summary="Evento de prueba",
             start_datetime="2025-03-10T11:00:00",
             end_datetime="2025-03-10T12:00:00"
         )
-    # Si el mensaje menciona "evento" o "calendario", intentamos extraer el rango de fechas
-    elif "evento" in incoming_lower or "calendario" in incoming_lower:
+    elif intention == "list":
+        # Extraer rango de fechas con ChatGPT
         fecha_info = obtener_rango_fechas_con_chatgpt(incoming_msg)
-        start_date = fecha_info.get("start_date")
-        end_date = fecha_info.get("end_date")
+        start_date = fecha_info["start_date"]
+        end_date = fecha_info["end_date"]
         respuesta = listar_eventos_por_rango(start_date, end_date)
     else:
+        # Cualquier otra cosa, ChatGPT genérico
         respuesta = obtener_respuesta_chatgpt(incoming_msg)
 
     resp = MessagingResponse()
