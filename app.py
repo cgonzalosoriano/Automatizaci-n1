@@ -8,8 +8,7 @@ from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
-# Configura tu API Key de OpenAI (reemplaza "TU_API_KEY" con tu clave real)
-import os
+# Configura tu API Key de OpenAI a través de una variable de entorno
 openai.api_key = os.environ.get("OPENAI_API_KEY")
 
 # Define el alcance para Google Calendar API
@@ -28,36 +27,8 @@ def obtener_respuesta_chatgpt(prompt):
         print("Error al obtener respuesta de ChatGPT:", e)
         return "Lo siento, hubo un error procesando tu solicitud."
 
-@app.route("/", methods=["GET"])
-def home():
-    return "¡Bienvenido! La aplicación está funcionando."
-
-@app.route("/whatsapp", methods=["POST"])
-def whatsapp_reply():
-    # Log para confirmar que se entra al endpoint
-    print(">>> Llegó una petición a /whatsapp")
-
-    # Obtiene el mensaje que envió el usuario a través de WhatsApp
-    incoming_msg = request.form.get("Body", "").strip()
-    # Log para ver el contenido del mensaje
-    print(f">>> Mensaje entrante: {incoming_msg}")
-
-    # Se envía el mensaje a ChatGPT y se obtiene la respuesta
-    respuesta_chatgpt = obtener_respuesta_chatgpt(incoming_msg)
-
-    # Se crea la respuesta para enviar de vuelta a través de Twilio
-    resp = MessagingResponse()
-    msg = resp.message()
-    msg.body(respuesta_chatgpt)
-
-    return Response(str(resp), mimetype="application/xml")
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
-
 def get_calendar_service():
-    # Lee el contenido del JSON desde la variable de entorno
+    # Lee el contenido del JSON desde la variable de entorno GOOGLE_CREDENTIALS
     credentials_info = json.loads(os.environ.get('GOOGLE_CREDENTIALS'))
     credentials = service_account.Credentials.from_service_account_info(credentials_info, scopes=SCOPES)
     service = build('calendar', 'v3', credentials=credentials)
@@ -66,7 +37,7 @@ def get_calendar_service():
 def listar_eventos():
     try:
         service = get_calendar_service()
-        calendar_id = 'primary'  # O puedes especificar otro calendario si lo prefieres
+        calendar_id = 'primary'  # O especifica otro calendario si lo prefieres
         events_result = service.events().list(
             calendarId=calendar_id, 
             maxResults=10, 
@@ -85,3 +56,33 @@ def listar_eventos():
     except Exception as e:
         print("Error al listar eventos:", e)
         return "Hubo un error al obtener los eventos del calendario."
+
+@app.route("/", methods=["GET"])
+def home():
+    return "¡Bienvenido! La aplicación está funcionando."
+
+@app.route("/whatsapp", methods=["POST"])
+def whatsapp_reply():
+    # Log para confirmar la entrada al endpoint
+    print(">>> Llegó una petición a /whatsapp")
+    
+    # Obtiene el mensaje entrante desde WhatsApp
+    incoming_msg = request.form.get("Body", "").strip()
+    print(f">>> Mensaje entrante: {incoming_msg}")
+
+    # Si el mensaje contiene términos relacionados con calendario o eventos, se llama a listar_eventos()
+    if "evento" in incoming_msg.lower() or "calendario" in incoming_msg.lower():
+        respuesta = listar_eventos()
+    else:
+        respuesta = obtener_respuesta_chatgpt(incoming_msg)
+
+    # Se crea la respuesta para enviar a través de Twilio
+    resp = MessagingResponse()
+    msg = resp.message()
+    msg.body(respuesta)
+
+    return Response(str(resp), mimetype="application/xml")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
