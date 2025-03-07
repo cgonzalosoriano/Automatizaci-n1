@@ -27,7 +27,7 @@ TIMEZONE = "America/Argentina/Buenos_Aires"
 def obtener_respuesta_generica(prompt):
     """
     Respuesta genérica de ChatGPT, incluyendo la fecha y hora actuales
-    para que ChatGPT pueda responder preguntas tipo "¿Qué día es hoy? y todo otro tipo de preguntas".
+    para que ChatGPT pueda responder preguntas tipo "¿Qué día es hoy?".
     """
     try:
         now = datetime.now()
@@ -53,7 +53,7 @@ def obtener_respuesta_generica(prompt):
         return response.choices[0].message.content.strip()
     except Exception as e:
         print("Error en obtener_respuesta_generica:", e)
-        return "Lo siento, no puedo procesar tu solicitud."
+        return "Lo siento, hubo un error procesando tu solicitud."
 
 
 def obtener_intencion(user_message):
@@ -72,7 +72,7 @@ def obtener_intencion(user_message):
     """
     try:
         system_prompt = (
-            "Eres un asistente que interpreta instrucciones del usuario en español. Pueden ser solicitudes de calendario, ordenes y todo otro tipo de asistencias "
+            "Eres un asistente que interpreta instrucciones de calendario en español. "
             "El usuario puede querer crear, listar, actualizar o borrar eventos. "
             "Devuelve un JSON con la siguiente estructura (solo llaves que apliquen): "
             "{"
@@ -84,7 +84,7 @@ def obtener_intencion(user_message):
             "  \"time_range_start\": \"YYYY-MM-DD\", "
             "  \"time_range_end\": \"YYYY-MM-DD\" "
             "}. "
-            "Añade un texto adicional breve pero sin explicaciones, solo el JSON."
+            "No añadas texto adicional ni explicaciones, solo el JSON."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -113,11 +113,11 @@ def obtener_rango_fechas_con_chatgpt(user_message):
     Devuelve un objeto JSON con "start_date" y "end_date", asumiendo el año actual.
     """
     try:
-        hoy = date.today().isoformat()  # Por ejemplo, "2025-11-25"
+        hoy = date.today().isoformat()  # Por ejemplo, "2023-11-25"
         system_prompt = (
-            f"Hoy es {hoy}. Eres un asistente para interpretar rangos de fechas. siempre ten en cuenta la fecha e interpretar las instrucciones del usuario. "
+            f"Hoy es {hoy}. Eres un asistente para interpretar rangos de fechas. "
             "El usuario te dará una frase relacionada con fechas (por ejemplo, 'eventos de mañana' o 'eventos de la próxima semana'). "
-            "Responde únicamente con un objeto JSON que contenga las claves 'start_date' y 'end_date' en formato YYYY-MM-DD, asumiendo la fecha actual. Si te falta algún dato, preguntale al usuario para completar la información necesaria. "
+            "Responde únicamente con un objeto JSON que contenga las claves 'start_date' y 'end_date' en formato YYYY-MM-DD, asumiendo el año actual. "
             "No añadas texto adicional ni explicaciones, solo el objeto JSON. "
             "Ejemplo: {\"start_date\": \"2023-11-26\", \"end_date\": \"2023-11-26\"}."
         )
