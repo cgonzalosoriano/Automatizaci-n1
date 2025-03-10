@@ -4,8 +4,12 @@ import openai
 import os
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import gspread
+from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
+from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
@@ -58,6 +62,59 @@ def listar_hojas():
     except Exception as e:
         print("Error al listar hojas:", e)
         return "Error al listar las hojas."
+
+# ----------------------------
+# CONFIGURACIÓN DE GOOGLE CALENDAR
+# ----------------------------
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+def get_calendar_service():
+    """Retorna un servicio de Google Calendar autorizado."""
+    creds = None
+    if os.path.exists('token.json'):
+        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file(
+                'credentials.json', SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open('token.json', 'w') as token:
+            token.write(creds.to_json())
+    return build('calendar', 'v3', credentials=creds)
+
+def crear_evento(summary, start_datetime, end_datetime):
+    """Crea un evento en Google Calendar."""
+    service = get_calendar_service()
+    event = {
+        'summary': summary,
+        'start': {
+            'dateTime': start_datetime,
+            'timeZone': 'America/Argentina/Buenos_Aires',
+        },
+        'end': {
+            'dateTime': end_datetime,
+            'timeZone': 'America/Argentina/Buenos_Aires',
+        },
+    }
+    event = service.events().insert(calendarId='primary', body=event).execute()
+    return f"Evento creado: {event.get('htmlLink')}"
+
+def listar_eventos(time_min=None, time_max=None):
+    """Lista eventos en Google Calendar."""
+    service = get_calendar_service()
+    events_result = service.events().list(
+        calendarId='primary',
+        timeMin=time_min,
+        timeMax=time_max,
+        singleEvents=True,
+        orderBy='startTime'
+    ).execute()
+    events = events_result.get('items', [])
+    if not events:
+        return "No se encontraron eventos."
+    return "\n".join([f"{event['summary']} ({event['start'].get('dateTime', event['start'].get('date'))})" for event in events])
 
 # ----------------------------
 # FUNCIONES PARA CHATGPT MULTI-TURN Y PARA CALENDARIO
@@ -244,13 +301,25 @@ def whatsapp_reply():
         user_data["historial"].append({"role": "assistant", "content": respuesta})
         return responder_whatsapp(respuesta)
 
-    # Interpretar instrucciones de eventos (desactivado)
+    # Interpretar instrucciones de eventos
     instruccion = interpretar_instruccion_evento(incoming_msg)
     action = instruccion.get("action", "other")
     print(">>> Acción detectada:", action)
 
-    if action in ["create", "list", "update", "delete"]:
-        respuesta = "La integración con Google Calendar está desactivada. Por favor, usa la funcionalidad de Google Sheets para almacenar datos."
+    if action == "create":
+        summary = instruccion.get("summary", "Reunión")
+        start_datetime = instruccion.get("start_datetime")
+        end_datetime = instruccion.get("end_datetime")
+        if start_datetime and end_datetime:
+            respuesta = crear_evento(summary, start_datetime, end_datetime)
+        else:
+            respuesta = "Faltan detalles para crear el evento. Por favor, proporciona una fecha y hora de inicio y fin."
+    elif action == "list":
+        time_min = instruccion.get("time_range_start")
+        time_max = instruccion.get("time_range_end")
+        respuesta = listar_eventos(time_min, time_max)
+    elif action in ["update", "delete"]:
+        respuesta = "Lo siento, las acciones de actualizar y eliminar eventos aún no están implementadas."
     else:
         respuesta = chatgpt_con_historial(user_data)
 
@@ -265,6 +334,4 @@ def responder_whatsapp(texto):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
-
 
