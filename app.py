@@ -71,17 +71,24 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 def get_calendar_service():
     """Retorna un servicio de Google Calendar autorizado."""
     creds = None
-    if os.path.exists('token.json'):
-        creds = Credentials.from_authorized_user_file('token.json', SCOPES)
+    # Intenta cargar el token desde una variable de entorno
+    token_json = os.environ.get("GOOGLE_CALENDAR_TOKEN")
+    if token_json:
+        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
+    
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                'credentials.json', SCOPES)
+            # Lee las credenciales desde la variable de entorno
+            creds_json = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS")
+            creds_info = json.loads(creds_json)
+            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
             creds = flow.run_local_server(port=0)
-        with open('token.json', 'w') as token:
-            token.write(creds.to_json())
+        
+        # Guarda el token en la variable de entorno para futuras ejecuciones
+        os.environ["GOOGLE_CALENDAR_TOKEN"] = creds.to_json()
+    
     return build('calendar', 'v3', credentials=creds)
 
 def crear_evento(summary, start_datetime, end_datetime):
