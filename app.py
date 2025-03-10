@@ -268,7 +268,8 @@ def whatsapp_reply():
             "estado": None,
             "estilo": None,
             "eventos_disponibles": [],
-            "chosen_event_id": None
+            "chosen_event_id": None,
+            "preferencias": {}
         }
     user_data = conversaciones[from_number]
     user_data["historial"].append({"role": "user", "content": incoming_msg})
@@ -334,4 +335,3 @@ def responder_whatsapp(texto):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
