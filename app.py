@@ -4,8 +4,10 @@ import openai
 import os
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 import gspread
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
@@ -60,6 +62,34 @@ def listar_hojas():
         return "Error al listar las hojas."
 
 # ----------------------------
+# CONFIGURACIÓN DE GOOGLE CALENDAR (usando credenciales de servicio)
+# ----------------------------
+SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+def get_calendar_service():
+    """Retorna un servicio de Google Calendar autorizado usando credenciales de servicio."""
+    creds_json = json.loads(os.environ.get("GOOGLE_CALENDAR_CREDENTIALS"))
+    creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
+    return build('calendar', 'v3', credentials=creds)
+
+def crear_evento(summary, start_datetime, end_datetime):
+    """Crea un evento en Google Calendar."""
+    service = get_calendar_service()
+    event = {
+        'summary': summary,
+        'start': {
+            'dateTime': start_datetime,
+            'timeZone': 'America/Argentina/Buenos_Aires',
+        },
+        'end': {
+            'dateTime': end_datetime,
+            'timeZone': 'America/Argentina/Buenos_Aires',
+        },
+    }
+    event = service.events().insert(calendarId='primary', body=event).execute()
+    return f"Evento creado: {event.get('htmlLink')}"
+
+# ----------------------------
 # FUNCIONES PARA CHATGPT MULTI-TURN Y PARA CALENDARIO
 # ----------------------------
 
@@ -102,22 +132,29 @@ def chatgpt_con_historial(user_data, mensaje_extra=None):
         print("Error en chatgpt_con_historial:", e)
         return "Lo siento, hubo un error llamando a ChatGPT."
 
-def interpretar_instruccion_hoja(user_message):
+def interpretar_instruccion_evento(user_message):
     """
-    Usa ChatGPT para interpretar instrucciones sobre hojas de cálculo.
-    Devuelve un JSON con:
-      {
-         "action": "create_sheet" | "delete_sheet" | "list_sheets" | "other",
-         "sheet_name": "..."
-      }
+    Usa ChatGPT para interpretar instrucciones de calendario en español.
+    Devuelve un JSON con la siguiente estructura (solo incluye las claves que apliquen):
+    {
+      "action": "create",
+      "summary": "...",
+      "start_datetime": "YYYY-MM-DDTHH:MM:SS",
+      "end_datetime": "YYYY-MM-DDTHH:MM:SS"
+    }
     """
     try:
         system_prompt = (
-            "Eres un asistente que interpreta instrucciones para manejar hojas de cálculo de Google Sheets. "
-            "El usuario puede querer crear, borrar o listar hojas. "
-            "Devuelve un JSON con la siguiente estructura: {\"action\": \"create_sheet\"|\"delete_sheet\"|\"list_sheets\"|\"other\", "
-            "\"sheet_name\": \"...\"} "
-            "Solo incluye las claves que apliquen, sin texto adicional."
+            "Eres un asistente que interpreta instrucciones de calendario en español. "
+            "El usuario puede querer crear eventos. "
+            "Devuelve un JSON con la siguiente estructura (solo las claves que apliquen): "
+            "{"
+            "  \"action\": \"create\", "
+            "  \"summary\": \"...\", "
+            "  \"start_datetime\": \"YYYY-MM-DDTHH:MM:SS\", "
+            "  \"end_datetime\": \"YYYY-MM-DDTHH:MM:SS\" "
+            "}. "
+            "No añadas texto adicional, solo el JSON."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -127,7 +164,7 @@ def interpretar_instruccion_hoja(user_message):
             model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.0,
-            max_tokens=150
+            max_tokens=300
         )
         raw_content = response.choices[0].message.content.strip()
         match = re.search(r'\{.*\}', raw_content)
@@ -136,7 +173,7 @@ def interpretar_instruccion_hoja(user_message):
         data = json.loads(raw_content)
         return data
     except Exception as e:
-        print("Error en interpretar_instruccion_hoja:", e)
+        print("Error en interpretar_instruccion_evento:", e)
         return {"action": "other"}
 
 # ----------------------------
@@ -159,8 +196,6 @@ def whatsapp_reply():
             "historial": [],
             "estado": None,
             "estilo": None,
-            "eventos_disponibles": [],
-            "chosen_event_id": None,
             "preferencias": {}
         }
     user_data = conversaciones[from_number]
@@ -175,27 +210,22 @@ def whatsapp_reply():
             user_data["historial"].append({"role": "assistant", "content": respuesta})
             return responder_whatsapp(respuesta)
 
-    # Interpretar instrucciones de hojas de cálculo
-    instruccion_hoja = interpretar_instruccion_hoja(incoming_msg)
-    sheet_action = instruccion_hoja.get("action", "other")
-    if sheet_action != "other":
-        if sheet_action == "create_sheet":
-            sheet_name = instruccion_hoja.get("sheet_name", "Hoja nueva")
-            respuesta = crear_hoja(sheet_name)
-        elif sheet_action == "delete_sheet":
-            sheet_name = instruccion_hoja.get("sheet_name", "")
-            if not sheet_name:
-                respuesta = "No se especificó el nombre de la hoja a borrar."
-            else:
-                respuesta = borrar_hoja(sheet_name)
-        elif sheet_action == "list_sheets":
-            respuesta = listar_hojas()
+    # Interpretar instrucciones de eventos
+    instruccion = interpretar_instruccion_evento(incoming_msg)
+    action = instruccion.get("action", "other")
+    print(">>> Acción detectada:", action)
 
-        user_data["historial"].append({"role": "assistant", "content": respuesta})
-        return responder_whatsapp(respuesta)
+    if action == "create":
+        summary = instruccion.get("summary", "Reunión")
+        start_datetime = instruccion.get("start_datetime")
+        end_datetime = instruccion.get("end_datetime")
+        if start_datetime and end_datetime:
+            respuesta = crear_evento(summary, start_datetime, end_datetime)
+        else:
+            respuesta = "Faltan detalles para crear el evento. Por favor, proporciona una fecha y hora de inicio y fin."
+    else:
+        respuesta = chatgpt_con_historial(user_data)
 
-    # Si no es una instrucción de hoja, usar ChatGPT para responder
-    respuesta = chatgpt_con_historial(user_data)
     user_data["historial"].append({"role": "assistant", "content": respuesta})
     return responder_whatsapp(respuesta)
 
@@ -203,6 +233,10 @@ def responder_whatsapp(texto):
     resp = MessagingResponse()
     resp.message(texto)
     return Response(str(resp), mimetype="application/xml")
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
