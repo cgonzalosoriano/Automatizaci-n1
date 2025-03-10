@@ -67,8 +67,13 @@ def listar_hojas():
         return "Error al listar las hojas."
 
 # ----------------------------
-# FUNCIONES PARA CHATGPT MULTI-TURN
+# FUNCIONES PARA CHATGPT MULTI-TURN Y PARA CALENDARIO
 # ----------------------------
+
+# Variable de ejemplo para Calendar (aunque está desactivado en este ejemplo)
+TIMEZONE = "America/Argentina/Buenos_Aires"
+# Si en el futuro se reactiva, se usará esta ID
+# CALENDAR_ID = "4b3b738826123b6b5715b6a4348f46bc395aa7efcfb72182c9f3baeee992105f@group.calendar.google.com"
 
 def armar_system_prompt(estilo):
     """Crea el system prompt según el estilo (ej. serio, chistes, amable)."""
@@ -107,22 +112,36 @@ def chatgpt_con_historial(user_data, mensaje_extra=None):
         print("Error en chatgpt_con_historial:", e)
         return "Lo siento, hubo un error llamando a ChatGPT."
 
-def interpretar_instruccion_hoja(user_message):
+def interpretar_instruccion_evento(user_message):
     """
-    Usa ChatGPT para interpretar instrucciones sobre hojas de cálculo.
-    Devuelve un JSON con:
-      {
-         "action": "create_sheet" | "delete_sheet" | "list_sheets" | "other",
-         "sheet_name": "..."
-      }
+    Usa ChatGPT para interpretar instrucciones de calendario en español.
+    Devuelve un JSON con la siguiente estructura (solo incluye las claves que apliquen):
+    {
+      "action": "create" | "list" | "update" | "delete" | "other",
+      "summary": "...",
+      "start_datetime": "YYYY-MM-DDTHH:MM:SS",
+      "end_datetime": "YYYY-MM-DDTHH:MM:SS",
+      "event_id": "...",
+      "time_range_start": "YYYY-MM-DD",
+      "time_range_end": "YYYY-MM-DD"
+    }
+    No añadas texto adicional, solo el JSON.
     """
     try:
         system_prompt = (
-            "Eres un asistente que interpreta instrucciones para manejar hojas de cálculo de Google Sheets. "
-            "El usuario puede querer crear, borrar o listar hojas. "
-            "Devuelve un JSON con la siguiente estructura: {\"action\": \"create_sheet\"|\"delete_sheet\"|\"list_sheets\"|\"other\", "
-            "\"sheet_name\": \"...\"} "
-            "Solo incluye las claves que apliquen, sin texto adicional."
+            "Eres un asistente que interpreta instrucciones de calendario en español. "
+            "El usuario puede querer crear, listar, actualizar o borrar eventos. "
+            "Devuelve un JSON con la siguiente estructura (solo las claves que apliquen): "
+            "{"
+            "  \"action\": \"create\"|\"list\"|\"update\"|\"delete\"|\"other\", "
+            "  \"summary\": \"...\", "
+            "  \"start_datetime\": \"YYYY-MM-DDTHH:MM:SS\", "
+            "  \"end_datetime\": \"YYYY-MM-DDTHH:MM:SS\", "
+            "  \"event_id\": \"...\", "
+            "  \"time_range_start\": \"YYYY-MM-DD\", "
+            "  \"time_range_end\": \"YYYY-MM-DD\" "
+            "}. "
+            "No añadas texto adicional, solo el JSON."
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -132,7 +151,7 @@ def interpretar_instruccion_hoja(user_message):
             model="gpt-3.5-turbo",
             messages=messages,
             temperature=0.0,
-            max_tokens=150
+            max_tokens=300
         )
         raw_content = response.choices[0].message.content.strip()
         match = re.search(r'\{.*\}', raw_content)
@@ -141,11 +160,49 @@ def interpretar_instruccion_hoja(user_message):
         data = json.loads(raw_content)
         return data
     except Exception as e:
-        print("Error en interpretar_instruccion_hoja:", e)
+        print("Error en interpretar_instruccion_evento:", e)
         return {"action": "other"}
 
+def obtener_rango_fechas_con_chatgpt(user_message):
+    """
+    Usa ChatGPT para extraer un rango de fechas en formato YYYY-MM-DD, asumiendo el año actual.
+    Devuelve un objeto JSON con "start_date" y "end_date".
+    """
+    try:
+        hoy = date.today().isoformat()  # Ej: "2023-11-25"
+        system_prompt = (
+            f"Hoy es {hoy}. Eres un asistente para interpretar rangos de fechas. "
+            "El usuario te dará una frase como 'eventos de mañana' o 'eventos de la próxima semana'. "
+            "Responde únicamente con un objeto JSON con 'start_date' y 'end_date' en formato YYYY-MM-DD, asumiendo el año actual. "
+            "No añadas texto adicional. Ejemplo: {\"start_date\": \"2023-11-26\", \"end_date\": \"2023-11-26\"}."
+        )
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=messages,
+            temperature=0.0,
+            max_tokens=100
+        )
+        raw_content = response.choices[0].message.content.strip()
+        match = re.search(r'\{.*\}', raw_content)
+        if match:
+            raw_content = match.group(0)
+        fecha_info = json.loads(raw_content)
+        if "start_date" not in fecha_info or "end_date" not in fecha_info:
+            raise ValueError("No se encontró 'start_date' o 'end_date'.")
+        return fecha_info
+    except Exception as e:
+        print("Error al obtener rango de fechas con ChatGPT:", e)
+        hoy_str = str(date.today())
+        return {"start_date": hoy_str, "end_date": hoy_str}
+
 # ----------------------------
-# (Comentado: Integración de Google Calendar, para usar Sheets en su lugar)
+# (Comentado: Integración de Google Calendar)
+# ----------------------------
+# Las funciones de Google Calendar se mantienen aquí, pero desactivadas.
 # def get_calendar_service():
 #     ...
 # def crear_evento(...):
@@ -228,7 +285,7 @@ def whatsapp_reply():
     user_data = conversaciones[from_number]
     user_data["historial"].append({"role": "user", "content": incoming_msg})
 
-    # Primero, revisamos si el usuario quiere configurar el estilo.
+    # Primero, revisar si el usuario quiere configurar el estilo.
     if "configurar estilo:" in incoming_msg.lower():
         partes = incoming_msg.split(":")
         if len(partes) >= 2:
@@ -237,7 +294,7 @@ def whatsapp_reply():
             user_data["historial"].append({"role": "assistant", "content": respuesta})
             return responder_whatsapp(respuesta)
 
-    # Luego, verificamos si el mensaje se refiere a hojas de cálculo.
+    # Luego, verificar si el mensaje se refiere a hojas de cálculo.
     instruccion_hoja = interpretar_instruccion_hoja(incoming_msg)
     sheet_action = instruccion_hoja.get("action", "other")
     if sheet_action != "other":
@@ -252,24 +309,20 @@ def whatsapp_reply():
                 respuesta = borrar_hoja(sheet_name)
         elif sheet_action == "list_sheets":
             respuesta = listar_hojas()
-        # Agregar la respuesta al historial y responder
         user_data["historial"].append({"role": "assistant", "content": respuesta})
         return responder_whatsapp(respuesta)
 
-    # Si no es una instrucción de hoja, interpretamos la instrucción de calendario.
-    # (Como desactivamos Google Calendar, aquí podríamos manejar solo la conversación libre)
+    # Finalmente, interpretamos la instrucción de calendario.
+    # (Como desactivamos Google Calendar, redirigimos a Sheets o conversación libre.)
     instruccion = interpretar_instruccion_evento(incoming_msg)
     action = instruccion.get("action", "other")
     print(">>> Acción detectada:", action)
 
-    # Dado que desactivamos Calendar, si se detecta create/list/update/delete para Calendar,
-    # podríamos redirigirlo a una respuesta informando que la funcionalidad de Calendar está desactivada.
     if action in ["create", "list", "update", "delete"]:
         respuesta = "La integración con Google Calendar está desactivada. Por favor, usa la funcionalidad de Google Sheets para almacenar datos."
     else:
         respuesta = chatgpt_con_historial(user_data)
 
-    # Agregar la respuesta al historial
     user_data["historial"].append({"role": "assistant", "content": respuesta})
     return responder_whatsapp(respuesta)
 
