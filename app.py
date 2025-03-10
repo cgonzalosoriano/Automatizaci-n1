@@ -4,12 +4,8 @@ import openai
 import os
 import json
 import re
-from datetime import datetime, timedelta
+from datetime import datetime
 import gspread
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
-from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
@@ -62,66 +58,6 @@ def listar_hojas():
     except Exception as e:
         print("Error al listar hojas:", e)
         return "Error al listar las hojas."
-
-# ----------------------------
-# CONFIGURACIÓN DE GOOGLE CALENDAR
-# ----------------------------
-SCOPES = ['https://www.googleapis.com/auth/calendar']
-
-def get_calendar_service():
-    """Retorna un servicio de Google Calendar autorizado."""
-    creds = None
-    # Intenta cargar el token desde una variable de entorno
-    token_json = os.environ.get("GOOGLE_CALENDAR_TOKEN")
-    if token_json:
-        creds = Credentials.from_authorized_user_info(json.loads(token_json), SCOPES)
-    
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            # Lee las credenciales desde la variable de entorno
-            creds_json = os.environ.get("GOOGLE_CALENDAR_CREDENTIALS")
-            creds_info = json.loads(creds_json)
-            flow = InstalledAppFlow.from_client_config(creds_info, SCOPES)
-            creds = flow.run_local_server(port=0)
-        
-        # Guarda el token en la variable de entorno para futuras ejecuciones
-        os.environ["GOOGLE_CALENDAR_TOKEN"] = creds.to_json()
-    
-    return build('calendar', 'v3', credentials=creds)
-
-def crear_evento(summary, start_datetime, end_datetime):
-    """Crea un evento en Google Calendar."""
-    service = get_calendar_service()
-    event = {
-        'summary': summary,
-        'start': {
-            'dateTime': start_datetime,
-            'timeZone': 'America/Argentina/Buenos_Aires',
-        },
-        'end': {
-            'dateTime': end_datetime,
-            'timeZone': 'America/Argentina/Buenos_Aires',
-        },
-    }
-    event = service.events().insert(calendarId='primary', body=event).execute()
-    return f"Evento creado: {event.get('htmlLink')}"
-
-def listar_eventos(time_min=None, time_max=None):
-    """Lista eventos en Google Calendar."""
-    service = get_calendar_service()
-    events_result = service.events().list(
-        calendarId='primary',
-        timeMin=time_min,
-        timeMax=time_max,
-        singleEvents=True,
-        orderBy='startTime'
-    ).execute()
-    events = events_result.get('items', [])
-    if not events:
-        return "No se encontraron eventos."
-    return "\n".join([f"{event['summary']} ({event['start'].get('dateTime', event['start'].get('date'))})" for event in events])
 
 # ----------------------------
 # FUNCIONES PARA CHATGPT MULTI-TURN Y PARA CALENDARIO
@@ -203,57 +139,6 @@ def interpretar_instruccion_hoja(user_message):
         print("Error en interpretar_instruccion_hoja:", e)
         return {"action": "other"}
 
-def interpretar_instruccion_evento(user_message):
-    """
-    Usa ChatGPT para interpretar instrucciones de calendario en español.
-    Devuelve un JSON con la siguiente estructura (solo incluye las claves que apliquen):
-    {
-      "action": "create" | "list" | "update" | "delete" | "other",
-      "summary": "...",
-      "start_datetime": "YYYY-MM-DDTHH:MM:SS",
-      "end_datetime": "YYYY-MM-DDTHH:MM:SS",
-      "event_id": "...",
-      "time_range_start": "YYYY-MM-DD",
-      "time_range_end": "YYYY-MM-DD"
-    }
-    No añadas texto adicional, solo el JSON.
-    """
-    try:
-        system_prompt = (
-            "Eres un asistente que interpreta instrucciones de calendario en español. "
-            "El usuario puede querer crear, listar, actualizar o borrar eventos. "
-            "Devuelve un JSON con la siguiente estructura (solo las claves que apliquen): "
-            "{"
-            "  \"action\": \"create\"|\"list\"|\"update\"|\"delete\"|\"other\", "
-            "  \"summary\": \"...\", "
-            "  \"start_datetime\": \"YYYY-MM-DDTHH:MM:SS\", "
-            "  \"end_datetime\": \"YYYY-MM-DDTHH:MM:SS\", "
-            "  \"event_id\": \"...\", "
-            "  \"time_range_start\": \"YYYY-MM-DD\", "
-            "  \"time_range_end\": \"YYYY-MM-DD\" "
-            "}. "
-            "No añadas texto adicional, solo el JSON."
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            temperature=0.0,
-            max_tokens=300
-        )
-        raw_content = response.choices[0].message.content.strip()
-        match = re.search(r'\{.*\}', raw_content)
-        if match:
-            raw_content = match.group(0)
-        data = json.loads(raw_content)
-        return data
-    except Exception as e:
-        print("Error en interpretar_instruccion_evento:", e)
-        return {"action": "other"}
-
 # ----------------------------
 # RUTA DE WHATSAPP
 # ----------------------------
@@ -309,28 +194,8 @@ def whatsapp_reply():
         user_data["historial"].append({"role": "assistant", "content": respuesta})
         return responder_whatsapp(respuesta)
 
-    # Interpretar instrucciones de eventos
-    instruccion = interpretar_instruccion_evento(incoming_msg)
-    action = instruccion.get("action", "other")
-    print(">>> Acción detectada:", action)
-
-    if action == "create":
-        summary = instruccion.get("summary", "Reunión")
-        start_datetime = instruccion.get("start_datetime")
-        end_datetime = instruccion.get("end_datetime")
-        if start_datetime and end_datetime:
-            respuesta = crear_evento(summary, start_datetime, end_datetime)
-        else:
-            respuesta = "Faltan detalles para crear el evento. Por favor, proporciona una fecha y hora de inicio y fin."
-    elif action == "list":
-        time_min = instruccion.get("time_range_start")
-        time_max = instruccion.get("time_range_end")
-        respuesta = listar_eventos(time_min, time_max)
-    elif action in ["update", "delete"]:
-        respuesta = "Lo siento, las acciones de actualizar y eliminar eventos aún no están implementadas."
-    else:
-        respuesta = chatgpt_con_historial(user_data)
-
+    # Si no es una instrucción de hoja, usar ChatGPT para responder
+    respuesta = chatgpt_con_historial(user_data)
     user_data["historial"].append({"role": "assistant", "content": respuesta})
     return responder_whatsapp(respuesta)
 
