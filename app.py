@@ -6,8 +6,6 @@ import json
 import re
 from datetime import datetime, timedelta
 import gspread
-from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
 
 app = Flask(__name__)
 
@@ -26,81 +24,144 @@ def get_sheet_client():
     client = gspread.service_account_from_dict(creds_json)
     return client
 
-def crear_hoja(sheet_name):
-    """Crea una nueva hoja en Google Sheets."""
+def obtener_hoja(nombre_hoja):
+    """Obtiene una hoja específica de Google Sheets."""
     try:
         client = get_sheet_client()
         spreadsheet = client.open_by_key(os.environ.get("SHEET_SPREADSHEET_KEY"))
-        spreadsheet.add_worksheet(title=sheet_name, rows="100", cols="20")
-        return f"Hoja '{sheet_name}' creada con éxito."
+        return spreadsheet.worksheet(nombre_hoja)
     except Exception as e:
-        print("Error al crear hoja:", e)
-        return "Error al crear la hoja."
+        print(f"Error al obtener la hoja {nombre_hoja}:", e)
+        return None
 
-def borrar_hoja(sheet_name):
-    """Borra una hoja existente en Google Sheets."""
+def agregar_columna(nombre_hoja, nombre_columna):
+    """Agrega una nueva columna a una hoja de Google Sheets."""
+    hoja = obtener_hoja(nombre_hoja)
+    if not hoja:
+        return f"Error: No se pudo acceder a la hoja {nombre_hoja}."
+    
     try:
-        client = get_sheet_client()
-        spreadsheet = client.open_by_key(os.environ.get("SHEET_SPREADSHEET_KEY"))
-        worksheet = spreadsheet.worksheet(sheet_name)
-        spreadsheet.del_worksheet(worksheet)
-        return f"Hoja '{sheet_name}' borrada con éxito."
+        # Obtener la primera fila (encabezados)
+        encabezados = hoja.row_values(1)
+        if nombre_columna in encabezados:
+            return f"La columna '{nombre_columna}' ya existe en la hoja {nombre_hoja}."
+        
+        # Agregar la nueva columna
+        nueva_columna_index = len(encabezados) + 1
+        hoja.update_cell(1, nueva_columna_index, nombre_columna)
+        return f"Columna '{nombre_columna}' agregada a la hoja {nombre_hoja}."
     except Exception as e:
-        print("Error al borrar hoja:", e)
-        return "Error al borrar la hoja."
+        print(f"Error al agregar columna a {nombre_hoja}:", e)
+        return f"Hubo un error al agregar la columna a {nombre_hoja}."
 
-def listar_hojas():
-    """Lista los nombres de todas las hojas en Google Sheets."""
+# ----------------------------
+# FUNCIONES PARA "LISTA DE PENDIENTES"
+# ----------------------------
+def agregar_tarea(descripcion, fecha_vencimiento, recordatorio=None):
+    """Agrega una tarea a la hoja 'Lista de Pendientes'."""
+    hoja = obtener_hoja("Lista de Pendientes")
+    if not hoja:
+        return "Error: No se pudo acceder a la hoja 'Lista de Pendientes'."
+    
     try:
-        client = get_sheet_client()
-        spreadsheet = client.open_by_key(os.environ.get("SHEET_SPREADSHEET_KEY"))
-        worksheets = spreadsheet.worksheets()
-        nombres = [ws.title for ws in worksheets]
-        return "Hojas disponibles: " + ", ".join(nombres)
+        # Validar formato de fecha
+        try:
+            datetime.strptime(fecha_vencimiento, "%d/%m/%Y")
+        except ValueError:
+            return "Formato de fecha inválido. Usa DD/MM/AAAA."
+        
+        # Obtener la próxima fila vacía
+        nueva_fila = [
+            str(len(hoja.get_all_values()) + 1),  # ID
+            datetime.now().strftime("%d/%m/%Y %H:%M"),  # Fecha de creación
+            fecha_vencimiento,  # Fecha de vencimiento
+            descripcion,  # Descripción
+            recordatorio if recordatorio else "Sin recordatorio"  # Recordatorio
+        ]
+        hoja.append_row(nueva_fila)
+        return f"Tarea agregada: {descripcion} (Vence: {fecha_vencimiento})"
     except Exception as e:
-        print("Error al listar hojas:", e)
-        return "Error al listar las hojas."
+        print("Error al agregar tarea:", e)
+        return "Hubo un error al agregar la tarea."
+
+def listar_tareas():
+    """Lista todas las tareas pendientes."""
+    hoja = obtener_hoja("Lista de Pendientes")
+    if not hoja:
+        return "Error: No se pudo acceder a la hoja 'Lista de Pendientes'."
+    
+    try:
+        tareas = hoja.get_all_records()
+        if not tareas:
+            return "No hay tareas pendientes."
+        
+        respuesta = "Tareas pendientes:\n"
+        for tarea in tareas:
+            respuesta += f"- {tarea['Descripción']} (Vence: {tarea['Fecha de Vencimiento']})\n"
+        return respuesta
+    except Exception as e:
+        print("Error al listar tareas:", e)
+        return "Hubo un error al listar las tareas."
 
 # ----------------------------
-# CONFIGURACIÓN DE GOOGLE CALENDAR (usando credenciales de servicio)
+# FUNCIONES PARA "BASE DE DATOS DE CLIENTES"
 # ----------------------------
-SCOPES = ['https://www.googleapis.com/auth/calendar']
+def agregar_nota_cliente(id_cliente, nota):
+    """Agrega una nota a la hoja 'Notas de Clientes'."""
+    hoja_maestro = obtener_hoja("Maestro de Clientes")
+    hoja_notas = obtener_hoja("Notas de Clientes")
+    if not hoja_maestro or not hoja_notas:
+        return "Error: No se pudo acceder a las hojas de clientes."
+    
+    try:
+        # Buscar el cliente en el maestro
+        cliente = next((row for row in hoja_maestro.get_all_records() if row["ID"] == id_cliente), None)
+        if not cliente:
+            return f"Error: No se encontró un cliente con ID {id_cliente}."
+        
+        # Agregar la nota
+        nueva_fila = [
+            id_cliente,
+            datetime.now().strftime("%d/%m/%Y %H:%M"),  # Fecha de creación
+            cliente["Nombre Cliente"],
+            cliente["CUIT"],
+            cliente["Descripción"],
+            nota  # Nota
+        ]
+        hoja_notas.append_row(nueva_fila)
+        return f"Nota agregada para {cliente['Nombre Cliente']}: {nota}"
+    except Exception as e:
+        print("Error al agregar nota:", e)
+        return "Hubo un error al agregar la nota."
 
-def get_calendar_service():
-    """Retorna un servicio de Google Calendar autorizado usando credenciales de servicio."""
-    creds_json = json.loads(os.environ.get("GOOGLE_CALENDAR_CREDENTIALS"))
-    creds = Credentials.from_service_account_info(creds_json, scopes=SCOPES)
-    return build('calendar', 'v3', credentials=creds)
-
-def crear_evento(summary, start_datetime, end_datetime):
-    """Crea un evento en Google Calendar."""
-    service = get_calendar_service()
-    event = {
-        'summary': summary,
-        'start': {
-            'dateTime': start_datetime,
-            'timeZone': 'America/Argentina/Buenos_Aires',
-        },
-        'end': {
-            'dateTime': end_datetime,
-            'timeZone': 'America/Argentina/Buenos_Aires',
-        },
-    }
-    event = service.events().insert(calendarId='primary', body=event).execute()
-    return f"Evento creado: {event.get('htmlLink')}"
+def listar_notas_cliente(id_cliente):
+    """Lista todas las notas de un cliente."""
+    hoja_notas = obtener_hoja("Notas de Clientes")
+    if not hoja_notas:
+        return "Error: No se pudo acceder a la hoja 'Notas de Clientes'."
+    
+    try:
+        notas = [row for row in hoja_notas.get_all_records() if row["ID"] == id_cliente]
+        if not notas:
+            return f"No hay notas para el cliente con ID {id_cliente}."
+        
+        respuesta = f"Notas del cliente {notas[0]['Nombre Cliente']}:\n"
+        for nota in notas:
+            respuesta += f"- {nota['Nota']} (Fecha: {nota['Fecha de Creación']})\n"
+        return respuesta
+    except Exception as e:
+        print("Error al listar notas:", e)
+        return "Hubo un error al listar las notas."
 
 # ----------------------------
-# FUNCIONES PARA CHATGPT MULTI-TURN Y PARA CALENDARIO
+# FUNCIONES PARA CHATGPT MULTI-TURN
 # ----------------------------
-
-TIMEZONE = "America/Argentina/Buenos_Aires"
-
 def armar_system_prompt(estilo):
     """Crea el system prompt según el estilo (ej. serio, chistes, amable)."""
     now = datetime.now()
     fecha_str = now.strftime("%d de %B de %Y")
     hora_str = now.strftime("%H:%M")
-    base = f"Hoy es {fecha_str} y son las {hora_str} (zona horaria: {TIMEZONE}). "
+    base = f"Hoy es {fecha_str} y son las {hora_str} (zona horaria: America/Argentina/Buenos_Aires). "
     if estilo == "serio":
         base += "Tu tono es formal y serio."
     elif estilo == "chistes":
@@ -132,54 +193,9 @@ def chatgpt_con_historial(user_data, mensaje_extra=None):
         print("Error en chatgpt_con_historial:", e)
         return "Lo siento, hubo un error llamando a ChatGPT."
 
-def interpretar_instruccion_evento(user_message):
-    """
-    Usa ChatGPT para interpretar instrucciones de calendario en español.
-    Devuelve un JSON con la siguiente estructura (solo incluye las claves que apliquen):
-    {
-      "action": "create",
-      "summary": "...",
-      "start_datetime": "YYYY-MM-DDTHH:MM:SS",
-      "end_datetime": "YYYY-MM-DDTHH:MM:SS"
-    }
-    """
-    try:
-        system_prompt = (
-            "Eres un asistente que interpreta instrucciones de calendario en español. "
-            "El usuario puede querer crear eventos. "
-            "Devuelve un JSON con la siguiente estructura (solo las claves que apliquen): "
-            "{"
-            "  \"action\": \"create\", "
-            "  \"summary\": \"...\", "
-            "  \"start_datetime\": \"YYYY-MM-DDTHH:MM:SS\", "
-            "  \"end_datetime\": \"YYYY-MM-DDTHH:MM:SS\" "
-            "}. "
-            "No añadas texto adicional, solo el JSON."
-        )
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_message}
-        ]
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=messages,
-            temperature=0.0,
-            max_tokens=300
-        )
-        raw_content = response.choices[0].message.content.strip()
-        match = re.search(r'\{.*\}', raw_content)
-        if match:
-            raw_content = match.group(0)
-        data = json.loads(raw_content)
-        return data
-    except Exception as e:
-        print("Error en interpretar_instruccion_evento:", e)
-        return {"action": "other"}
-
 # ----------------------------
 # RUTA DE WHATSAPP
 # ----------------------------
-
 @app.route("/", methods=["GET"])
 def home():
     return "¡Bienvenido! La aplicación está funcionando."
@@ -210,19 +226,27 @@ def whatsapp_reply():
             user_data["historial"].append({"role": "assistant", "content": respuesta})
             return responder_whatsapp(respuesta)
 
-    # Interpretar instrucciones de eventos
-    instruccion = interpretar_instruccion_evento(incoming_msg)
-    action = instruccion.get("action", "other")
-    print(">>> Acción detectada:", action)
-
-    if action == "create":
-        summary = instruccion.get("summary", "Reunión")
-        start_datetime = instruccion.get("start_datetime")
-        end_datetime = instruccion.get("end_datetime")
-        if start_datetime and end_datetime:
-            respuesta = crear_evento(summary, start_datetime, end_datetime)
+    # Interpretar comandos estructurados
+    if "agregar tarea:" in incoming_msg.lower():
+        partes = incoming_msg.split(":")
+        if len(partes) >= 2:
+            descripcion = partes[1].strip()
+            respuesta = agregar_tarea(descripcion, "31/12/2023")  # Fecha de vencimiento por defecto
         else:
-            respuesta = "Faltan detalles para crear el evento. Por favor, proporciona una fecha y hora de inicio y fin."
+            respuesta = "Por favor, proporciona una descripción para la tarea."
+    elif "agregar nota para" in incoming_msg.lower():
+        partes = incoming_msg.split(":")
+        if len(partes) >= 2:
+            id_cliente = partes[0].split("para")[1].strip()
+            nota = partes[1].strip()
+            respuesta = agregar_nota_cliente(id_cliente, nota)
+        else:
+            respuesta = "Por favor, proporciona un ID de cliente y una nota."
+    elif "listar tareas" in incoming_msg.lower():
+        respuesta = listar_tareas()
+    elif "listar notas de" in incoming_msg.lower():
+        id_cliente = incoming_msg.split("de")[1].strip()
+        respuesta = listar_notas_cliente(id_cliente)
     else:
         respuesta = chatgpt_con_historial(user_data)
 
@@ -233,10 +257,6 @@ def responder_whatsapp(texto):
     resp = MessagingResponse()
     resp.message(texto)
     return Response(str(resp), mimetype="application/xml")
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
